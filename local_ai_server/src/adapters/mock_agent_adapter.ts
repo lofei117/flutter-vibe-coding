@@ -23,7 +23,7 @@ export class MockAgentAdapter implements AgentAdapter {
     const logs: string[] = [`Target: ${target}.`];
 
     if (target === 'home-title' || /标题|title/i.test(instruction)) {
-      const title = extractTitle(instruction) ?? 'Mobile Vibe Coding Demo';
+      const title = extractTitle(instruction) ?? 'Flutter Vibe Coding';
       next = replaceConstString(next, 'homeTitle', title);
       logs.push(`Set homeTitle to "${title}".`);
     }

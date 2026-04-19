@@ -1,12 +1,17 @@
 .DS_Store
 .idea/
+.vscode/
 *.iml
+*.log
+.env
+.env.*
 node_modules/
 dist/
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 build/
+coverage/
 ios/Pods/
 ios/.symlinks/
 ios/Flutter/Flutter.framework

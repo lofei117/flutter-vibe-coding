@@ -13,7 +13,7 @@ export class ProjectContextService {
   getAllowedRoot(): string {
     return path.resolve(
       process.env.FLUTTER_PROJECT_PATH ??
-        path.join(process.cwd(), '..', 'mobile_vibe_demo'),
+        path.join(process.cwd(), '..', 'flutter_vibe_app'),
     );
   }
 

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeAgentLogLine } from '../services/agent_log_filter.ts';
 import { ensureAllowedBinary, ensureSafeShellCommand } from '../services/command_allowlist.ts';
 import type { AgentAdapter } from '../services/agent_service.ts';
 import type {
@@ -10,13 +11,33 @@ import type {
 } from '../types/agent.ts';
 
 const IGNORED_DIRS = new Set([
-  '.dart_tool',
+  // VCS / IDE
   '.git',
   '.idea',
   '.vscode',
+  // Flutter / Dart caches
+  '.dart_tool',
+  '.fvm',
+  '.flutter-plugins',
+  '.flutter-plugins-dependencies',
+  // Generic build outputs
   'build',
+  'coverage',
+  // Android caches
+  '.gradle',
+  '.kotlin',
+  // iOS / macOS caches
   'Pods',
+  'DerivedData',
+  '.symlinks',
+  // Misc node / native caches
   'node_modules',
+  '.cache',
+  '.ccls-cache',
+  // Flutter ephemeral output (regenerated on each build)
+  'ephemeral',
+  // This server's own working dir if the project path overlaps
+  '.local-ai-server',
 ]);
 
 const TRACKED_EXTENSIONS = new Set([
@@ -59,7 +80,6 @@ export class CodexAdapter implements AgentAdapter {
     console.log('[codex] prompt begin');
     console.log(prompt);
     console.log('[codex] prompt end');
-    context.emit('agent_log', 'Codex prompt prepared.');
 
     const output = process.env.CODEX_COMMAND
       ? await runShellCommand(process.env.CODEX_COMMAND, prompt, projectPath, context.emit)
@@ -213,16 +233,17 @@ function runCommand(
 
     let stdout = '';
     let stderr = '';
+    let logChunkIndex = 0;
 
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString();
       stdout += text;
-      writeProcessOutput('stdout', text, emit);
+      logChunkIndex = writeProcessOutput('stdout', text, emit, logChunkIndex);
     });
     child.stderr.on('data', (chunk) => {
       const text = chunk.toString();
       stderr += text;
-      writeProcessOutput('stderr', text, emit);
+      logChunkIndex = writeProcessOutput('stderr', text, emit, logChunkIndex);
     });
     child.on('error', (error) => {
       console.error(`[codex] failed to start: ${error.message}`);
@@ -248,12 +269,22 @@ function writeProcessOutput(
   stream: 'stdout' | 'stderr',
   text: string,
   emit: AgentEmit,
-): void {
+  chunkIndex: number,
+): number {
   for (const line of text.split(/\r?\n/)) {
     if (line.length === 0) continue;
     console.log(`[codex:${stream}] ${line}`);
-    emit('agent_log', line, { stream });
+    const entry = normalizeAgentLogLine({
+      line,
+      stream,
+      chunkIndex: chunkIndex++,
+      source: 'codex',
+    });
+    if (entry) {
+      emit('agent_log', entry.message, entry.payload);
+    }
   }
+  return chunkIndex;
 }
 
 function formatCommand(command: string, args: string[]): string {

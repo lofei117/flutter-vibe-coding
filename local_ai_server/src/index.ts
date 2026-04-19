@@ -61,7 +61,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(port, host, () => {
   console.log(`Local AI server listening on http://${host}:${port}`);
-  console.log(`Default Flutter project path: ${process.env.FLUTTER_PROJECT_PATH ?? '../mobile_vibe_demo'}`);
+  console.log(`Default Flutter project path: ${process.env.FLUTTER_PROJECT_PATH ?? '../flutter_vibe_app'}`);
   console.log(`Agent adapter: ${process.env.AGENT_ADAPTER ?? 'mock'}`);
 });
 

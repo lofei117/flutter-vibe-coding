@@ -14,6 +14,7 @@ const DEFAULT_WRITABLE_EXTENSIONS = new Set([
 
 const DEFAULT_WRITABLE_BASENAMES = new Set([
   'pubspec.yaml',
+  'pubspec.lock',
   'analysis_options.yaml',
 ]);
 

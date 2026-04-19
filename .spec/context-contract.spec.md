@@ -504,6 +504,49 @@ type CommandEvent = {
 
 AI Vibe Panel 必须展示这些事件，让用户看到处理过程，而不是等待一个最终响应。
 
+### 过程事件颗粒度契约
+
+`CommandEvent` 是面向 App 面板的用户反馈事件，不是无损终端日志流。
+
+Server 生成事件时必须遵守：
+
+- 阶段变化必须使用独立 stage，不应只通过 `agent_log` 描述。
+- `agent_log` 用于承载必要的 agent / shell 输出片段，但必须过滤低价值噪音。
+- `agent_log` 必须与当前工程、当前指令、代码修改、安全检查、reload/restart、自修复、HITL 相关；无关的 agent 基础设施日志不得进入 App 事件流。
+- 必须过滤的典型无关日志包括：Codex 插件/市场同步失败、featured plugin cache 预热失败、远端 403/HTML 错误页、认证页面 HTML、telemetry/debug 噪音、spinner 和空行。
+- `agent_log` 不应按 token 级别拆分，也不应把整次 agent 输出合并成单条超长消息。
+- 对连续 stdout/stderr，server 应按语义段落优先切分；无法语义切分时，按 300ms 到 800ms 时间窗口或 300 到 1200 字符大小窗口切分。
+- `stderr`、编译错误、安全风险、HITL 请求、自修复结果必须提升为独立关键事件或带结构化 payload 的 `agent_log`，不能只作为大块日志中的一行。
+
+`agent_log.payload` 建议包含：
+
+```ts
+type AgentLogPayload = {
+  stream?: 'stdout' | 'stderr' | 'system' | 'codex';
+  level?: 'debug' | 'info' | 'warning' | 'error';
+  category?:
+    | 'thinking'
+    | 'context'
+    | 'patch'
+    | 'safety'
+    | 'reload'
+    | 'repair'
+    | 'approval'
+    | 'fallback'
+    | 'raw';
+  chunkIndex?: number;
+  truncated?: boolean;
+  source?: 'codex' | 'mock' | 'flutter' | 'server' | 'shell';
+};
+```
+
+App 展示事件时必须遵守：
+
+- 默认展示高信号时间线。
+- 连续 `agent_log` 可以聚合显示，但必须可展开查看分片。
+- 聚合显示时需要展示分片数量、首尾 sequence、stream / level 摘要。
+- `level=error`、`category=safety`、`category=approval`、`category=repair` 的日志不应被静默折叠到不可见。
+
 ## 请求示例
 
 ```json
@@ -516,7 +559,7 @@ AI Vibe Panel 必须展示这些事件，让用户看到处理过程，而不是
     "appName": "mobile_vibe_demo",
     "runtimeTarget": "web",
     "debugMode": true,
-    "serverUrl": "http://192.168.11.169:8787",
+    "serverUrl": "http://192.168.x.x:8787",
     "appLaunchMode": "server-managed"
   },
   "selection": {

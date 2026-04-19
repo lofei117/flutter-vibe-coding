@@ -158,6 +158,38 @@ MVP 至少展示这些阶段：
 
 实现方式可以是 SSE、WebSocket 或短轮询。MVP 优先选择简单可靠的 SSE 或短轮询。
 
+#### R8.1 过程事件颗粒度
+
+过程事件的目标不是完整复刻终端输出，而是让用户高效理解“现在进行到哪、正在做什么、是否需要我介入”。
+
+事件必须分为三类：
+
+- 阶段事件：`queued`、`context_collected`、`agent_started`、`patch_generated`、`reload_started`、`reload_completed`、`completed`、`failed` 等。阶段事件必须独立发送，不应被合并进 `agent_log`。
+- 进度事件：用于说明 agent 当前正在分析、生成、修复、回滚、等待确认等。进度事件应使用明确短句，面向用户可读。
+- 原始日志片段：使用 `agent_log` 承载 Codex / shell stdout / stderr 的必要摘要或片段。
+
+`agent_log` 的颗粒度规则：
+
+- `agent_log` 只应返回与当前 Flutter 工程、本次用户指令、代码修改、安全检查、reload/restart、自修复、HITL 直接相关的信息。
+- 不应向 App 面板透出 agent / CLI 自身的基础设施噪音，例如插件市场同步失败、远端缓存预热失败、认证页 HTML、无关网络 403、内部 telemetry/debug 噪音。
+- 不允许按 token 级别发送。
+- 不允许把一次长时间 agent 执行的全部输出合并成一条巨大日志。
+- 推荐按“语义段落”切分，例如：开始读取上下文、决定修改文件、生成 patch、发现风险、执行 reload、自修复尝试。
+- 如果只能拿到连续 stdout/stderr，应按时间窗口和大小切分：
+  - 同一 stream 在 300ms 到 800ms 内的连续输出可以合并为一条。
+  - 单条 `agent_log.message` 建议控制在 300 到 1200 字符。
+  - 超过上限时应截断或拆分，并在 payload 中标记 `truncated: true`。
+- 低价值噪音日志，例如重复 spinner、空行、纯进度符号、重复 advisory，应在 server 端过滤或折叠。
+- 被过滤掉的无关 agent 原始日志可以保留在 Mac 本地 server 控制台或本地调试日志中，但不应进入 App 面板事件流和会话历史。
+- 错误、风险、安全拦截、需要 HITL、reload 失败、自修复结果必须单独成事件，不能只藏在合并日志里。
+
+App 面板展示规则：
+
+- Events 页默认展示“高信号时间线”：阶段事件 + 进度摘要 + 折叠后的 agent log group。
+- 连续 `agent_log` 可以在 UI 上聚合成一个可展开组，但组内必须保留分片边界、时间和 stream 信息。
+- 默认视图不应让用户看到几十条低价值碎片，也不应只看到一条不可读的大块日志。
+- History 中至少保留阶段事件、关键 agent_log 摘要、最终结果；完整原始日志可作为调试详情折叠展示。
+
 ### R9. Codex Adapter 主路径
 
 Server 已经有 Codex adapter 对接点，后续实现应把它视作真实 agent 主路径：

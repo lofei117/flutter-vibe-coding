@@ -61,7 +61,7 @@ export class AppSessionManager {
 
     const target = (request.target ?? 'chrome') as AppTarget;
     const projectPath = this.projects.resolveProjectPath(request.projectPath);
-    const args = ['--no-version-check', 'run'];
+    const args = ['run'];
     if (target === 'chrome') {
       args.push('-d', 'chrome');
     } else if (request.deviceId) {

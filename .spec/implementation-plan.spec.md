@@ -155,6 +155,17 @@ local_ai_server/src/types/
 - 编译错误自检修复状态。
 - 需要用户确认时的 HITL 操作入口。
 
+过程事件颗粒度要求：
+
+- Server 端新增 agent log normalizer，把 Codex / shell 输出转换为高信号 `CommandEvent`。
+- normalizer 负责过滤空行、spinner、重复 advisory、无意义进度符号。
+- normalizer 必须过滤与当前工程和用户指令无关的 agent 基础设施噪音，例如插件市场同步失败、远端 403/HTML 页面、认证页 HTML、telemetry/debug 噪音。
+- normalizer 可以把完整原始 stdout/stderr 留在 Mac 本地 console 或调试日志中，但 App event stream 只能收到过滤后的高信号片段。
+- normalizer 优先按语义段落切分；否则按 300ms 到 800ms 时间窗口或 300 到 1200 字符大小窗口切分。
+- 阶段事件、错误事件、HITL 事件、自修复事件必须独立发送，不能只混在 `agent_log` 里。
+- App Events 页默认聚合连续 `agent_log`，但提供展开查看分片；错误、安全、approval、repair 类日志默认突出展示。
+- History 保留关键事件摘要，完整日志作为调试详情，不作为默认阅读主线。
+
 ## Phase 5：单会话历史持久化
 
 目标：hot restart 后，App 端 AI 面板仍能看到历史会话。
