@@ -14,7 +14,9 @@
 - 为了支持可靠 hot reload，Flutter App 必须由 server 启动或接管，server 需要持有 `flutter run` / `flutter attach` 控制权。
 - Hot restart 后，App 端必须能恢复当前单会话历史；MVP 不做多会话。
 - Server 必须严格控制 App 下发指令的执行边界，避免严重或毁灭级操作。
-- Human in the loop 放入远期规划，MVP 只预留契约。
+- Reload/restart 出现编译错误时，server 必须尝试自检修复；修复失败后进入 HITL。
+- 涉及 pub 依赖或完整重编译 App 的变更必须进入简单 HITL，由用户确认。
+- Human in the loop 分层实现：MVP 做简单确认，完整 diff 审批放入远期规划。
 
 ## 规格文件
 
@@ -55,5 +57,7 @@
 - App 面板还没有订阅 server 过程事件。
 - Hot restart 后还不能恢复当前单会话历史。
 - Server 还没有系统化安全策略和 patch guard。
+- Reload/restart 编译错误还不能自动自检修复。
+- pub 依赖或完整重编译类变更还没有 HITL 确认。
 
 这些缺口不是可有可无的第二阶段优化，而是 mobile vibe coding app 真正 MVP 的基础能力。

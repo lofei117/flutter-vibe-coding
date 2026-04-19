@@ -1,6 +1,7 @@
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { ProjectContext, ProjectFile } from '../types/index.ts';
+import type { ProjectContext, ProjectFile } from '../types/agent.ts';
+import { evaluateProjectPath, SafetyError } from './safety_policy.ts';
 
 const DEFAULT_FILES = [
   'lib/main.dart',
@@ -9,12 +10,27 @@ const DEFAULT_FILES = [
 ];
 
 export class ProjectContextService {
-  async collect(projectPathFromRequest?: string): Promise<ProjectContext> {
-    const projectPath = path.resolve(
-      projectPathFromRequest ??
-        process.env.FLUTTER_PROJECT_PATH ??
+  getAllowedRoot(): string {
+    return path.resolve(
+      process.env.FLUTTER_PROJECT_PATH ??
         path.join(process.cwd(), '..', 'mobile_vibe_demo'),
     );
+  }
+
+  resolveProjectPath(projectPathFromRequest?: string): string {
+    const allowedRoot = this.getAllowedRoot();
+    const projectPath = projectPathFromRequest
+      ? path.resolve(projectPathFromRequest)
+      : allowedRoot;
+    const decision = evaluateProjectPath(projectPath, { allowedRoot });
+    if (!decision.allowed) {
+      throw new SafetyError(decision);
+    }
+    return projectPath;
+  }
+
+  async collect(projectPathFromRequest?: string): Promise<ProjectContext> {
+    const projectPath = this.resolveProjectPath(projectPathFromRequest);
 
     const files: ProjectFile[] = [];
     for (const relativePath of DEFAULT_FILES) {
@@ -37,5 +53,26 @@ export class ProjectContextService {
 
     console.log(`[context] collected ${files.length} files from ${projectPath}`);
     return { projectPath, files };
+  }
+
+  async readFileSafe(
+    projectPath: string,
+    relativePath: string,
+  ): Promise<ProjectFile | null> {
+    const projectRoot = path.resolve(projectPath);
+    const fullPath = path.resolve(projectRoot, relativePath);
+    if (!fullPath.startsWith(projectRoot + path.sep) && fullPath !== projectRoot) {
+      return null;
+    }
+    try {
+      const content = await readFile(fullPath, 'utf8');
+      return {
+        path: fullPath,
+        relativePath: path.relative(projectRoot, fullPath),
+        content,
+      };
+    } catch {
+      return null;
+    }
   }
 }

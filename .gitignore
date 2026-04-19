@@ -12,3 +12,4 @@ ios/.symlinks/
 ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
 android/.gradle/
+local_ai_server/.local-ai-server/

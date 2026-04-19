@@ -1,26 +1,38 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import type { ReloadResult } from '../types/index.ts';
+import { spawn } from 'node:child_process';
+import type { ReloadResult } from '../types/agent.ts';
+import type { AppSessionManager } from './app_session_manager.ts';
+import { ensureSafeShellCommand } from './command_allowlist.ts';
 
 export class FlutterReloadService {
-  private flutterRunProcess: ChildProcessWithoutNullStreams | null = null;
+  private readonly appSessions: AppSessionManager;
 
-  constructor() {
-    if (process.env.AUTO_START_FLUTTER === 'true') {
-      this.startManagedFlutterRun();
-    }
+  constructor(appSessions: AppSessionManager) {
+    this.appSessions = appSessions;
   }
 
   async triggerReload(projectPath: string): Promise<ReloadResult> {
-    if (this.flutterRunProcess?.stdin.writable) {
-      this.flutterRunProcess.stdin.write('r');
+    if (this.appSessions.hasManagedRunning()) {
+      const result = await this.appSessions.signalCurrentReload();
       return {
         reloadTriggered: true,
-        reloadMessage: 'Sent hot reload command "r" to the managed flutter run process.',
+        reloadSucceeded: result.ok,
+        reloadMessage: result.message,
+        errorText: result.errorText,
+        output: result.output,
       };
     }
 
     const reloadCommand = process.env.FLUTTER_RELOAD_COMMAND;
     if (reloadCommand) {
+      try {
+        ensureSafeShellCommand(reloadCommand);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          reloadTriggered: false,
+          reloadMessage: `FLUTTER_RELOAD_COMMAND rejected by allowlist: ${message}`,
+        };
+      }
       return runReloadCommand(reloadCommand, projectPath);
     }
 
@@ -31,35 +43,22 @@ export class FlutterReloadService {
     };
   }
 
-  private startManagedFlutterRun(): void {
-    const projectPath = process.env.FLUTTER_PROJECT_PATH;
-    if (!projectPath) {
-      console.warn('[reload] AUTO_START_FLUTTER=true requires FLUTTER_PROJECT_PATH.');
-      return;
+  async triggerRestart(): Promise<ReloadResult> {
+    if (this.appSessions.hasManagedRunning()) {
+      const result = await this.appSessions.signalCurrentRestart();
+      return {
+        reloadTriggered: true,
+        reloadSucceeded: result.ok,
+        reloadMessage: result.message,
+        errorText: result.errorText,
+        output: result.output,
+      };
     }
-
-    const args = ['run'];
-    if (process.env.FLUTTER_DEVICE_ID) {
-      args.push('-d', process.env.FLUTTER_DEVICE_ID);
-    }
-
-    console.log(`[reload] starting managed flutter ${args.join(' ')} in ${projectPath}`);
-    this.flutterRunProcess = spawn('flutter', args, {
-      cwd: projectPath,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
-    });
-
-    this.flutterRunProcess.stdout.on('data', (chunk) => {
-      process.stdout.write(`[flutter] ${chunk}`);
-    });
-    this.flutterRunProcess.stderr.on('data', (chunk) => {
-      process.stderr.write(`[flutter] ${chunk}`);
-    });
-    this.flutterRunProcess.on('exit', (code) => {
-      console.log(`[reload] managed flutter run exited with ${code}`);
-      this.flutterRunProcess = null;
-    });
+    return {
+      reloadTriggered: false,
+      reloadMessage:
+        'Code was changed. No managed flutter run process is attached; please restart flutter run yourself.',
+    };
   }
 }
 
@@ -82,10 +81,12 @@ function runReloadCommand(command: string, cwd: string): Promise<ReloadResult> {
     child.on('close', (code) => {
       resolve({
         reloadTriggered: code === 0,
+        reloadSucceeded: code === 0,
         reloadMessage:
           code === 0
             ? `FLUTTER_RELOAD_COMMAND completed. ${output.trim()}`
             : `FLUTTER_RELOAD_COMMAND exited with ${code}. ${output.trim()}`,
+        output,
       });
     });
   });

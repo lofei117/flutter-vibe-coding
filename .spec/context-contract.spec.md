@@ -334,15 +334,30 @@ type ApprovalDecision = {
 
 type ApprovalRequest = {
   approvalId: string;
+  commandId: string;
+  reason:
+    | 'dependency_change'
+    | 'requires_full_rebuild'
+    | 'self_repair_failed'
+    | 'safety_needs_review'
+    | 'user_confirmation';
   title: string;
   summary: string;
   changedFiles: string[];
   diffPreview?: string;
   risks?: string[];
+  suggestedActions: Array<'continue' | 'rebuild' | 'rollback' | 'retry' | 'stop'>;
 };
 ```
 
-MVP 不实现完整确认流，但响应和事件可以预留是否需要确认。
+MVP 必须实现简单确认流，但不要求完整 diff 审批 UI。
+
+需要 HITL 的典型场景：
+
+- pub 依赖变更。
+- 需要完整重新编译 App。
+- reload/restart 编译错误自动修复失败。
+- 安全策略判定为 `needs_review`。
 
 ## 单会话历史
 
@@ -415,6 +430,7 @@ type CommandResponse = {
   requiresApproval?: boolean;
   approvalRequest?: ApprovalRequest;
   safety?: SafetyDecision;
+  repair?: RepairSummary;
 };
 ```
 
@@ -432,6 +448,29 @@ type CommandResponse = {
 - `diagnostics`：警告、错误、补充说明。
 - `requiresApproval` / `approvalRequest`：Human in the loop 远期预留。
 - `safety`：server 安全检查结果。
+- `repair`：reload/restart 编译错误自检修复摘要。
+
+## Reload/Restart 自检修复
+
+```ts
+type RepairSummary = {
+  attempted: boolean;
+  success: boolean;
+  attempts: number;
+  errorSummary?: string;
+  changedFiles: string[];
+  fallbackToApproval?: boolean;
+};
+```
+
+说明：
+
+- `attempted`：是否尝试自检修复。
+- `success`：修复是否成功。
+- `attempts`：尝试次数，MVP 默认最多 1 次。
+- `errorSummary`：编译错误摘要。
+- `changedFiles`：修复修改的文件。
+- `fallbackToApproval`：是否进入 HITL。
 
 ## 过程事件结构
 
@@ -449,8 +488,12 @@ type CommandEvent = {
     | 'patch_generated'
     | 'patch_applied'
     | 'reload_started'
+    | 'reload_failed'
+    | 'self_repair_started'
+    | 'self_repair_completed'
     | 'reload_completed'
     | 'approval_required'
+    | 'approval_resolved'
     | 'completed'
     | 'failed';
   message: string;

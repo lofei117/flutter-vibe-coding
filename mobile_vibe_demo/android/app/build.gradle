@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.example.mobile_vibe_demo"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // 本机若 $ANDROID_SDK/ndk/<version> 不完整会报 CXX1101；先不强制版本，装好 NDK 后可改回：ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8

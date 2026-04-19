@@ -15,6 +15,8 @@
 - Codex adapter 对接点继续可用。
 - App hot restart 后可以恢复当前单会话历史。
 - Server 有基础安全控制，能拒绝明显危险指令。
+- Reload/restart 编译错误可触发自检修复。
+- pub 依赖或完整重编译类变更可触发简单 HITL。
 
 验证方式：
 
@@ -87,7 +89,8 @@ local_ai_server/src/types/
 - 增加响应字段 `contextSummary`
 - 增加过程事件类型 `CommandEvent`
 - 增加 `appSessionId`
-- 预留 Human in the loop 类型 `ApprovalRequest` / `ApprovalDecision`
+- 增加 Human in the loop 类型 `ApprovalRequest` / `ApprovalDecision`
+- 增加 reload 自检修复类型 `RepairSummary`
 
 验证标准：
 
@@ -149,6 +152,8 @@ local_ai_server/src/types/
 - changed files。
 - reload 状态。
 - 当前单会话历史。
+- 编译错误自检修复状态。
+- 需要用户确认时的 HITL 操作入口。
 
 ## Phase 5：单会话历史持久化
 
@@ -302,6 +307,7 @@ Adapter 变化：
 - Server 持有 `flutter run` stdin。
 - 修改代码后发送 `r`。
 - 如果 hot reload 失败，发送 `R` hot restart。
+- 如果 hot reload / hot restart 出现编译错误，进入自检修复流程。
 - App 面板展示 reload 过程和结果。
 - Hot restart 后 App 面板恢复当前单会话历史。
 
@@ -310,13 +316,75 @@ Adapter 变化：
 - 如果用户手动启动 App，server 返回清晰的手动 reload 指令。
 - 这个模式只能作为兼容 fallback，不是推荐主路径。
 
-## Phase 11：Human in the Loop 远期规划
+## Phase 11：Reload/Restart 编译错误自检修复
+
+目标：当 reload/restart 因编译错误失败时，server 自动尝试修复一次，避免用户被迫手动排查。
+
+流程：
+
+1. Server 捕获 `flutter run` / reload 输出。
+2. 判断是否为编译错误。
+3. 发送 `reload_failed` event。
+4. 组装 repair context：
+   - 编译错误日志
+   - 最近一次 patch
+   - 相关文件
+   - selected component context
+5. 发送 `self_repair_started` event。
+6. 调用 agent 生成修复 patch。
+7. Patch 经过安全检查。
+8. 应用修复 patch。
+9. 再次尝试 reload/restart。
+10. 发送 `self_repair_completed` 或 `approval_required`。
+
+限制：
+
+- MVP 默认最多自动修复 1 次。
+- 自检修复不得绕过安全策略。
+- 如果修复涉及 pub 依赖或完整重编译，必须进入 HITL。
+
+验证标准：
+
+- 制造一个简单 Dart 编译错误。
+- Agent 修改后 reload 失败。
+- Server 自动触发一次修复。
+- App 面板能看到失败、修复、再次 reload 的全过程。
+
+## Phase 12：简单 Human in the Loop
+
+MVP 必须实现简单 HITL，不要求完整 diff 审批。
+
+触发场景：
+
+- 修改 `pubspec.yaml` / `pubspec.lock`。
+- 新增或删除 pub 依赖。
+- 修改 Android/iOS/macOS/web 平台配置。
+- 需要完整重新编译 App。
+- 自检修复失败。
+- 安全策略返回 `needs_review`。
+
+流程：
+
+1. Server 暂停自动执行。
+2. 发送 `approval_required` event。
+3. App 面板展示：
+   - 原因
+   - 受影响文件
+   - 风险摘要
+   - 建议动作
+4. 用户选择：
+   - `approved`
+   - `rejected`
+   - `revise`
+5. App 发送 `approvalDecision`。
+6. Server 继续、回滚、停止或等待补充指令。
+
+## Phase 13：Human in the Loop 远期规划
 
 未来复杂修改可支持 App 端确认：
 
 - Codex 先生成计划或 diff。
-- Server 发送 `approval_required` event。
-- App 面板展示计划 / diff / 风险。
+- App 面板展示完整计划 / diff / 风险。
 - 用户选择 approve / reject / revise。
 - Server 根据用户决定继续或终止。
 
@@ -331,10 +399,14 @@ MVP 只保留契约，不实现完整交互。
 - 用户可以复用 UME inspector selection 选中 home button。
 - Panel 展示 selected target summary。
 - Panel 展示 server/agent 处理过程事件。
+- Panel 展示 reload 编译错误自检修复过程。
+- Panel 支持简单 HITL 确认。
 - Hot restart 后 Panel 恢复当前单会话历史。
 - `/command` 收到 selection context + instruction。
 - Server 日志打印 selected widget 和 source hint。
 - Server 拒绝明显危险指令，并向 App 面板展示原因。
+- Reload/restart 编译错误至少自动修复一次或进入 HITL。
+- pub 依赖/完整重编译类变更进入 HITL。
 - Codex adapter 或 mock fallback 使用 selection context 修改正确文件。
 - Server 控制 App reload，并展示修改结果。
 
