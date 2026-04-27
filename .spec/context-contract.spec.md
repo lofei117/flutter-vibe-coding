@@ -114,8 +114,11 @@ type ClientMeta = {
   platform: 'flutter';
   appName: string;
   appVersion?: string;
+  buildNumber?: string;
+  gitSha?: string;
   runtimeTarget?: 'web' | 'android' | 'ios' | 'macos' | 'unknown';
   debugMode?: boolean;
+  buildMode?: 'debug' | 'profile' | 'release' | 'unknown';
   umePluginVersion?: string;
   serverUrl?: string;
   appLaunchMode?: 'server-managed' | 'manual';
@@ -125,9 +128,11 @@ type ClientMeta = {
 字段说明：
 
 - `platform`：当前固定为 `flutter`。
-- `appName`：App 名称，例如 `mobile_vibe_demo`。
+- `appName`：App 名称，例如 `flutter_vibe_app`。
+- `appVersion` / `buildNumber` / `gitSha`：用于把运行中反馈关联到具体构建产物。
 - `runtimeTarget`：当前运行目标，例如 `web`、`android`、`ios`。
 - `debugMode`：是否 debug 模式。
+- `buildMode`：当前包类型。debug 支持实时编辑；profile/release 主要用于提单反馈。
 - `umePluginVersion`：AI Vibe Panel 插件版本，方便排查兼容性。
 - `serverUrl`：当前使用的 server URL。
 - `appLaunchMode`：App 是由 server 启动，还是用户手动启动。主路径必须是 `server-managed`。
@@ -504,6 +509,93 @@ type CommandEvent = {
 
 AI Vibe Panel 必须展示这些事件，让用户看到处理过程，而不是等待一个最终响应。
 
+## Profile/Release Feedback Ticket
+
+Profile/release 包不能假设 debug inspector 和 source line 一定可用。它们提交的是变更建议，而不是实时热更新请求。
+
+```http
+POST /feedback-ticket
+Content-Type: application/json
+```
+
+```ts
+type FeedbackTicketRequest = {
+  instruction: string;
+  clientMeta: ClientMeta;
+  pageContext: {
+    route?: string;
+    pageId?: string;
+    title?: string;
+  };
+  target?: {
+    semanticId?: string;
+    widgetKey?: string;
+    text?: string;
+    semanticLabel?: string;
+    bounds?: Rect;
+    sourceLocation?: SourceLocation;
+  };
+  screenshot?: {
+    mimeType: 'image/png' | 'image/jpeg';
+    dataBase64?: string;
+    localPath?: string;
+  };
+  runtimeContext?: RuntimeContext;
+};
+
+type FeedbackTicket = {
+  ticketId: string;
+  instruction: string;
+  status:
+    | 'queued'
+    | 'planned'
+    | 'applied'
+    | 'ci_running'
+    | 'deployed'
+    | 'failed';
+  clientMeta: ClientMeta;
+  pageContext: FeedbackTicketRequest['pageContext'];
+  target?: FeedbackTicketRequest['target'];
+  createdAt: string;
+  updatedAt: string;
+  ci?: LocalCiResult;
+  previewUrl?: string;
+};
+```
+
+字段说明：
+
+- `instruction`：产品/QA 的修改意见。
+- `pageContext`：页面路由和业务页面 ID，是非 debug 包的重要定位入口。
+- `target.semanticId` / `target.widgetKey`：优先用于服务端定位代码。
+- `target.sourceLocation`：可选增强字段。profile/release 中不存在时不能视为错误。
+- `screenshot`：用于让后台 agent 或人类审核理解用户指向的 UI 区域。
+- `runtimeContext`：可选运行态摘要。
+
+## Local CI/CD Result
+
+```ts
+type LocalCiResult = {
+  status: 'queued' | 'running' | 'passed' | 'failed';
+  startedAt?: string;
+  finishedAt?: string;
+  steps: Array<{
+    name: 'analyze' | 'test' | 'build_web' | 'deploy_preview';
+    command: string;
+    status: 'queued' | 'running' | 'passed' | 'failed' | 'skipped';
+    durationMs?: number;
+    logSummary?: string;
+  }>;
+};
+```
+
+MVP 推荐的本地 CI/CD steps：
+
+- `flutter analyze`
+- `flutter test`
+- `flutter build web --profile` 或 `flutter build web --release`
+- 部署 `build/web` 到本地 preview URL
+
 ### 过程事件颗粒度契约
 
 `CommandEvent` 是面向 App 面板的用户反馈事件，不是无损终端日志流。
@@ -556,7 +648,7 @@ App 展示事件时必须遵守：
   "sessionId": "current",
   "clientMeta": {
     "platform": "flutter",
-    "appName": "mobile_vibe_demo",
+    "appName": "flutter_vibe_app",
     "runtimeTarget": "web",
     "debugMode": true,
     "serverUrl": "http://192.168.x.x:8787",
@@ -645,7 +737,7 @@ App 展示事件时必须遵守：
   "instruction": "...",
   "clientMeta": {
     "platform": "flutter",
-    "appName": "mobile_vibe_demo"
+    "appName": "flutter_vibe_app"
   }
 }
 ```

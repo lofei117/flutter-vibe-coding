@@ -189,7 +189,11 @@ export class CommandOrchestrator {
     }
 
     if (runResult.fellBackFromCodex) {
-      emit('agent_log', `Codex unavailable, fell back to mock adapter: ${runResult.fallbackReason}`);
+      emit('agent_log', `Codex unavailable, fell back to mock adapter: ${runResult.fallbackReason}`, {
+        level: 'warning',
+        category: 'fallback',
+        source: 'server',
+      });
     }
 
     const patchResult = runResult.result;
@@ -243,12 +247,23 @@ export class CommandOrchestrator {
     // --- HITL gate for high-risk changes ------------------------------------
     const initialRisk = classifyRisk(accumulatedChangedFiles);
     if (initialRisk.requiresApproval) {
-      emit('agent_log', `High-risk change detected: ${initialRisk.reasons.join('; ')}`);
+      emit('agent_log', `High-risk change detected: ${initialRisk.reasons.join('; ')}`, {
+        level: 'warning',
+        category: 'safety',
+        source: 'server',
+      });
       const rollbackErrors = await this.rollbackToBaseline(originalBefore);
       if (rollbackErrors.length > 0) {
-        emit('agent_log', `Rollback warnings: ${rollbackErrors.join('; ')}`);
+        emit('agent_log', `Rollback warnings: ${rollbackErrors.join('; ')}`, {
+          level: 'warning',
+          category: 'safety',
+          source: 'server',
+        });
       } else {
-        emit('agent_log', 'Rolled back edits; waiting for user approval.');
+        emit('agent_log', 'Rolled back edits; waiting for user approval.', {
+          category: 'approval',
+          source: 'server',
+        });
       }
       const decision = await this.requestApproval(commandId, emit, {
         risk: initialRisk,
@@ -274,7 +289,10 @@ export class CommandOrchestrator {
         return rejected;
       }
       // Approved: re-apply patches, then full rebuild.
-      emit('agent_log', 'User approved the high-risk change; re-applying patches.');
+      emit('agent_log', 'User approved the high-risk change; re-applying patches.', {
+        category: 'approval',
+        source: 'server',
+      });
       try {
         await this.writePatches(commandId, currentPatches);
       } catch (error) {
@@ -324,7 +342,11 @@ export class CommandOrchestrator {
       !reloadResult.reloadSucceeded && reloadResult.errorText && attempt <= MAX_REPAIR_ATTEMPTS;
       attempt++
     ) {
-      emit('agent_log', `Repair attempt ${attempt}/${MAX_REPAIR_ATTEMPTS}: compile errors detected.`);
+      emit('agent_log', `Repair attempt ${attempt}/${MAX_REPAIR_ATTEMPTS}: compile errors detected.`, {
+        level: 'warning',
+        category: 'repair',
+        source: 'server',
+      });
 
       let repairResult;
       try {
@@ -336,12 +358,20 @@ export class CommandOrchestrator {
         );
         repairResult = await this.deps.agents.run(repairContext);
       } catch (error) {
-        emit('agent_log', `Repair attempt ${attempt} crashed: ${(error as Error).message}`);
+        emit('agent_log', `Repair attempt ${attempt} crashed: ${(error as Error).message}`, {
+          level: 'error',
+          category: 'repair',
+          source: 'server',
+        });
         break;
       }
 
       if (!repairResult.result.applied) {
-        emit('agent_log', `Repair attempt ${attempt} made no changes; giving up.`);
+        emit('agent_log', `Repair attempt ${attempt} made no changes; giving up.`, {
+          level: 'warning',
+          category: 'repair',
+          source: 'server',
+        });
         break;
       }
 
@@ -373,14 +403,22 @@ export class CommandOrchestrator {
 
       lastRisk = classifyRisk(accumulatedChangedFiles);
       if (lastRisk.requiresApproval) {
-        emit('agent_log', 'Repair introduced high-risk file; rolling back and aborting repair loop.');
+        emit('agent_log', 'Repair introduced high-risk file; rolling back and aborting repair loop.', {
+          level: 'warning',
+          category: 'repair',
+          source: 'server',
+        });
         break;
       }
       reloadResult = await this.triggerReloadOrRestart(emit, lastRisk);
     }
 
     if (!reloadResult.reloadSucceeded) {
-      emit('agent_log', 'Reload did not succeed; rolling back all command edits.');
+      emit('agent_log', 'Reload did not succeed; rolling back all command edits.', {
+        level: 'error',
+        category: 'reload',
+        source: 'server',
+      });
       const rollbackErrors = await this.rollbackToBaseline(originalBefore);
       const errSummary = reloadResult.errorText
         ? `\nCompile errors:\n${reloadResult.errorText}`

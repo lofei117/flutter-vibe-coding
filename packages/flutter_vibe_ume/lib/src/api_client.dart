@@ -7,6 +7,7 @@ import 'context/approval.dart';
 import 'context/client_meta.dart';
 import 'context/command_event.dart';
 import 'context/command_response.dart';
+import 'context/feedback_ticket.dart';
 import 'context/runtime_context.dart';
 import 'context/selected_component_context.dart';
 import 'context/session_state.dart';
@@ -151,7 +152,7 @@ class AiVibeApiClient {
   Stream<CommandEvent> streamCommandEvents({
     required String serverUrl,
     required String commandId,
-    Duration interval = const Duration(milliseconds: 800),
+    Duration interval = const Duration(milliseconds: 350),
     Duration timeout = const Duration(minutes: 5),
   }) async* {
     final deadline = DateTime.now().add(timeout);
@@ -248,6 +249,116 @@ class AiVibeApiClient {
       return session['appSessionId'] as String?;
     }
     return null;
+  }
+
+  // ----- Feedback ticket (product/QA mode) -----------------------------
+
+  /// POST /feedback-ticket. Creates a ticket; server is the source of truth.
+  Future<FeedbackTicket> createFeedbackTicket({
+    required String serverUrl,
+    required FeedbackTicketRequest request,
+  }) async {
+    final uri = _buildUri(serverUrl, '/feedback-ticket');
+    final response = await _client.post(
+      uri,
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode(request.toJson()),
+    );
+    final decoded = _decode(response);
+    if (response.statusCode >= 400) {
+      throw Exception(decoded['message'] ?? response.body);
+    }
+    final ticketJson = decoded['ticket'];
+    if (ticketJson is! Map<String, dynamic>) {
+      throw Exception('Server did not return a ticket payload.');
+    }
+    return FeedbackTicket.fromJson(ticketJson);
+  }
+
+  /// POST /feedback-ticket/:id/process. Triggers the pipeline. By default
+  /// returns immediately; pass [wait]=true to block until the pipeline ends.
+  Future<FeedbackTicket> processFeedbackTicket({
+    required String serverUrl,
+    required String ticketId,
+    bool wait = false,
+    String? buildFlavor,
+    bool? skipTests,
+  }) async {
+    final uri = _buildUri(
+      serverUrl,
+      '/feedback-ticket/$ticketId/process',
+      query: wait ? const {'wait': 'true'} : null,
+    );
+    final body = <String, dynamic>{
+      if (buildFlavor != null) 'buildFlavor': buildFlavor,
+      if (skipTests != null) 'skipTests': skipTests,
+    };
+    final response = await _client.post(
+      uri,
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    final decoded = _decode(response);
+    if (response.statusCode >= 400) {
+      throw Exception(decoded['message'] ?? response.body);
+    }
+    return FeedbackTicket.fromJson(
+      decoded['ticket'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  /// GET /feedback-ticket/:id.
+  Future<FeedbackTicket> fetchFeedbackTicket({
+    required String serverUrl,
+    required String ticketId,
+  }) async {
+    final uri = _buildUri(serverUrl, '/feedback-ticket/$ticketId');
+    final response = await _client.get(uri);
+    final decoded = _decode(response);
+    if (response.statusCode >= 400) {
+      throw Exception(decoded['message'] ?? response.body);
+    }
+    return FeedbackTicket.fromJson(
+      decoded['ticket'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  /// Short-polling stream for feedback ticket events. SSE is preferable but
+  /// requires `package:eventsource_client`; we keep MVP simple with polling.
+  Stream<FeedbackTicketEvent> streamFeedbackEvents({
+    required String serverUrl,
+    required String ticketId,
+    Duration interval = const Duration(milliseconds: 500),
+    Duration timeout = const Duration(minutes: 30),
+  }) async* {
+    final deadline = DateTime.now().add(timeout);
+    var lastSequence = 0;
+    while (DateTime.now().isBefore(deadline)) {
+      FeedbackTicket ticket;
+      try {
+        ticket = await fetchFeedbackTicket(
+          serverUrl: serverUrl,
+          ticketId: ticketId,
+        );
+      } catch (error) {
+        yield FeedbackTicketEvent(
+          ticketId: ticketId,
+          sequence: lastSequence + 1,
+          stage: 'log',
+          message: 'poll failed: $error',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+        );
+        await Future<void>.delayed(interval);
+        continue;
+      }
+      for (final event in ticket.events) {
+        if (event.sequence <= lastSequence) continue;
+        lastSequence = event.sequence;
+        yield event;
+      }
+      if (ticket.isTerminal) return;
+      await Future<void>.delayed(interval);
+    }
   }
 
   Map<String, dynamic> _decode(http.Response response) {

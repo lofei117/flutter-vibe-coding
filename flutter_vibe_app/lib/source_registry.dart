@@ -7,6 +7,7 @@ const Map<String, SourceAnchor> sourceRegistry = <String, SourceAnchor>{
     file: 'lib/home_page.dart',
     symbol: 'homeButtonLabel',
     owner: 'HomePage',
+    line: 42,
     package: 'flutter_vibe_app',
     additionalSymbols: ['homeButtonColor'],
   ),
@@ -14,12 +15,14 @@ const Map<String, SourceAnchor> sourceRegistry = <String, SourceAnchor>{
     file: 'lib/home_page.dart',
     symbol: 'homeTitle',
     owner: 'HomePage',
+    line: 29,
     package: 'flutter_vibe_app',
   ),
   'home.description': SourceAnchor(
     file: 'lib/home_page.dart',
     symbol: 'homeDescription',
     owner: 'HomePage',
+    line: 36,
     package: 'flutter_vibe_app',
   ),
 };

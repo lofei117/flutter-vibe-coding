@@ -273,6 +273,66 @@ MVP 要求：
 
 如果变更涉及 pub 依赖、平台配置或其他需要完整重新编译 App 的内容，server 不应静默重编译，而应进入 HITL，提示用户确认。
 
+### R14. Profile/Release 提单模式
+
+面向产品、QA、设计、运营等非工程角色时，App 不应强依赖 debug 模式、UME debug inspector 或本地 hot reload。
+
+产品化后必须区分两条链路：
+
+- Debug Live Edit：面向开发者，在 debug session 中选中组件、生成上下文、修改代码并 hot reload。
+- Feedback Ticket Mode：面向产品/QA，在 profile 或 release 包中提交修改意见，由后台生成变更单，后续统一处理、审核、部署。
+
+Profile/Release 提单模式的目标不是实时改代码，而是让非工程角色可以在真实或近真实环境中高质量表达修改意图。
+
+提单 payload 至少应包含：
+
+- 用户自然语言修改意见。
+- 当前页面 route / page id。
+- App version / build number / git sha，如果可获得。
+- 运行目标和设备信息。
+- 截图或用户圈选区域，MVP 可先用页面截图。
+- 被选中组件的运行时摘要，如果可获得。
+- 业务语义 ID / widget key / test id / analytics id，如果可获得。
+- 当前 UI 文本、语义 label、bounds、局部 widget tree 摘要。
+
+源码文件和行号在 profile/release 中只能作为“尽力获取”的增强字段，不能作为唯一定位依据。
+
+更稳定的定位主键应逐步转向：
+
+- 显式 widget key。
+- 业务语义 ID。
+- route/page id。
+- build-time source index。
+- design token / component registry。
+- 服务端静态源码索引。
+
+如果 profile/release 包无法提供源码行号，后台仍必须能基于截图、route、语义 ID、组件文本和源码索引生成候选文件与修改建议。
+
+### R15. 后台交付与最小 CI/CD 闭环
+
+Feedback Ticket Mode 的后台交付流程：
+
+1. App 提交反馈/修改建议。
+2. Server 持久化为变更单。
+3. Agent 根据变更单和源码上下文生成 patch 或 PR。
+4. 安全策略和必要 HITL 审核通过。
+5. 运行最小 CI 验证。
+6. 构建可部署产物。
+7. 部署到本地或测试环境。
+8. 用户刷新 Web 页面或安装新包后看到新效果。
+
+MVP 的本地 CI/CD 不追求完整平台化，只验证链路可行。
+
+推荐最小链路：
+
+- `flutter analyze`
+- `flutter test`
+- `flutter build web --profile` 或 `flutter build web --release`
+- 将 `build/web` 发布到本地静态目录或本地静态 server
+- 通过浏览器刷新验证新效果
+
+如果是移动端包，MVP 只需要证明可触发构建，不要求接入完整签名、分发和灰度系统。
+
 ## 验收标准
 
 ### AC1. 薄指令链路仍然可用
@@ -352,6 +412,21 @@ Server 日志必须展示：
 ### AC11. 依赖变更触发 HITL
 
 当 agent 修改 pub 依赖或导致需要完整重新编译 App 时，server 必须暂停自动执行，向 App 面板发送 `approval_required`，由用户确认后再继续。
+
+### AC12. Profile/Release 提单链路可演示
+
+在不依赖 debug hot reload 的情况下，用户可以提交一条修改建议并生成后台变更单。
+
+MVP 可以先用本地文件或本地 server storage 持久化变更单，但必须包含：
+
+- 指令/建议。
+- route 或页面标识。
+- app version/build 信息。
+- 截图或截图占位字段。
+- 组件运行时摘要或业务语义 ID。
+- 处理状态，例如 `queued`、`planned`、`applied`、`deployed`。
+
+后台可以基于该变更单触发 agent 修改、CI 验证和本地 web build 部署。用户刷新后能看到新效果。
 
 ## 设计原则
 

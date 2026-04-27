@@ -9,6 +9,10 @@ import 'src/ai_vibe_panel.dart';
 import 'src/source_anchor.dart';
 
 export 'src/ai_vibe_panel.dart' show AiVibePanel;
+export 'src/feedback_ticket_panel.dart'
+    show FeedbackTicketLauncher, FeedbackTicketSheet, PageContextResolver;
+export 'src/context/feedback_ticket.dart';
+export 'src/context/client_meta.dart';
 export 'src/source_anchor.dart';
 
 class FlutterVibeUme extends StatelessWidget {

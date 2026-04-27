@@ -46,6 +46,12 @@ const LOW_VALUE_PATTERNS = [
   /^[-=]{3,}$/,
 ];
 
+const RELEVANT_RAW_PATTERNS = [
+  /\blib\/[\w./-]+\.(?:dart|yaml|yml|json|gradle|kt|swift|plist|xml)\b/i,
+  /\b(?:reading|analyzing|planning|updating|applying|modifying|writing|editing)\b/i,
+  /\b(?:widget|selection|source|context|candidate|patch|diff|reload|restart|repair|approval|fallback)\b/i,
+];
+
 export function normalizeAgentLogLine(params: {
   line: string;
   stream: AgentLogStream;
@@ -64,6 +70,10 @@ export function normalizeAgentLogLine(params: {
     source: params.source ?? 'codex',
     chunkIndex: params.chunkIndex,
   };
+
+  if (payload.category == 'raw' && !isRelevantRawLine(cleaned)) {
+    return null;
+  }
 
   if (cleaned.length <= MAX_AGENT_LOG_CHARS) {
     return { message: cleaned, payload };
@@ -98,4 +108,8 @@ function inferCategory(line: string): AgentLogPayload['category'] {
 function stripAnsi(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+function isRelevantRawLine(line: string): boolean {
+  return RELEVANT_RAW_PATTERNS.some((pattern) => pattern.test(line));
 }

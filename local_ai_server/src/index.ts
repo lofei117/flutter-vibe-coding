@@ -13,7 +13,15 @@ import {
   handleCommandStatus,
   type RouteResult,
 } from './routes/command.ts';
+import {
+  handleCreateFeedbackTicket,
+  handleFeedbackTicketEvents,
+  handleGetFeedbackTicket,
+  handleListFeedbackTickets,
+  handleProcessFeedbackTicket,
+} from './routes/feedback.ts';
 import { handleHealth } from './routes/health.ts';
+import { handlePreview } from './routes/preview.ts';
 import { handleCurrentSession } from './routes/session.ts';
 import { buildContainer } from './services/container.ts';
 
@@ -139,6 +147,47 @@ async function dispatch(
     return true;
   }
 
+  // --- Feedback ticket (product/QA mode) ---------------------------------
+  if (method === 'POST' && pathname === '/feedback-ticket') {
+    const body = await readJson(req);
+    sendResult(res, await handleCreateFeedbackTicket(body));
+    return true;
+  }
+  if (method === 'GET' && pathname === '/feedback-tickets') {
+    sendResult(res, handleListFeedbackTickets());
+    return true;
+  }
+  const ticketDetail = matchRoute('/feedback-ticket/:id', pathname);
+  if (method === 'GET' && ticketDetail) {
+    sendResult(res, handleGetFeedbackTicket(ticketDetail.id));
+    return true;
+  }
+  const ticketProcess = matchRoute('/feedback-ticket/:id/process', pathname);
+  if (method === 'POST' && ticketProcess) {
+    const body = await readJson(req);
+    const wait = url.searchParams.get('wait') === 'true';
+    sendResult(
+      res,
+      await handleProcessFeedbackTicket(
+        ticketProcess.id,
+        body,
+        { host, port, requestHost: req.headers.host },
+        { wait },
+      ),
+    );
+    return true;
+  }
+  const ticketEvents = matchRoute('/feedback-ticket/:id/events', pathname);
+  if (method === 'GET' && ticketEvents) {
+    handleFeedbackTicketEvents(ticketEvents.id, res);
+    return true;
+  }
+
+  // --- Preview static handler --------------------------------------------
+  if (method === 'GET' && (await handlePreview(pathname, res))) {
+    return true;
+  }
+
   return false;
 }
 
@@ -180,7 +229,7 @@ function readJson(req: IncomingMessage): Promise<unknown> {
     let raw = '';
     req.on('data', (chunk) => {
       raw += chunk.toString();
-      if (raw.length > 2 * 1024 * 1024) {
+      if (raw.length > 8 * 1024 * 1024) {
         reject(new Error('Request body is too large.'));
         req.destroy();
       }

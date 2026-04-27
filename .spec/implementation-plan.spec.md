@@ -21,9 +21,9 @@
 验证方式：
 
 ```bash
-cd mobile_vibe_demo
-flutter --no-version-check analyze
-flutter --no-version-check run -d chrome
+cd flutter_vibe_app
+flutter analyze
+flutter run -d chrome
 ```
 
 ## Phase 1：Server 托管 Flutter App 生命周期
@@ -46,7 +46,7 @@ flutter --no-version-check run -d chrome
 MVP 启动命令：
 
 ```bash
-flutter --no-version-check run -d chrome
+flutter run -d chrome
 ```
 
 Android/iOS 后续复用同一 app session 抽象。
@@ -64,7 +64,7 @@ Android/iOS 后续复用同一 app session 抽象。
 Dart model 目录：
 
 ```text
-mobile_vibe_demo/lib/ume_plugins/context/
+packages/flutter_vibe_ume/lib/src/context/
 ```
 
 需要新增的 Dart 文件：
@@ -401,6 +401,80 @@ MVP 必须实现简单 HITL，不要求完整 diff 审批。
 
 MVP 只保留契约，不实现完整交互。
 
+## Phase 14：Profile/Release 提单模式
+
+目标：让产品、QA、设计、运营等非工程角色也能提交高质量修改意见，而不要求他们运行 debug 包或接触 hot reload。
+
+运行模式：
+
+- Debug Live Edit：开发者实时模式，继续使用 server-managed debug session、UME inspector、Codex 修改和 hot reload。
+- Feedback Ticket Mode：产品/QA 协作模式，profile/release 包只负责收集反馈上下文并创建变更单。
+
+App 侧 MVP：
+
+- 增加一个可复用的 feedback payload model。
+- 在 profile/release 中不强依赖 `WidgetInspectorService` 和 source line。
+- 优先采集 route/page id、业务语义 ID、显式 widget key、当前文本、bounds、截图或截图占位。
+- 提交到 server 后展示变更单 ID 和当前状态。
+
+Server 侧 MVP：
+
+- 新增变更单存储，先用本地 JSON 文件或 SQLite 均可。
+- 支持创建、查询和更新变更单状态。
+- 变更单状态最少包含：
+  - `queued`
+  - `planned`
+  - `applied`
+  - `ci_running`
+  - `deployed`
+  - `failed`
+- 后台 agent 可以从变更单进入同一套安全检查和 patch 应用流程。
+
+定位策略：
+
+- Debug 模式优先使用 UME/Flutter inspector 的 source location。
+- Profile/release 模式把 source location 视为可选增强。
+- 可靠主键逐步转向业务语义 ID、widget key、route/page id、build-time source index 和服务端源码索引。
+
+## Phase 15：本地最小 CI/CD 验证链路
+
+目标：验证“变更单 -> agent 修改 -> CI 验证 -> 构建 -> 用户刷新看到效果”的产品化路径，不建设复杂平台。
+
+推荐本地实现：
+
+1. Agent 应用 patch。
+2. 运行 `flutter analyze`。
+3. 运行 `flutter test`。
+4. 运行 `flutter build web --profile` 或 `flutter build web --release`。
+5. 将 `build/web` 作为静态目录发布。
+6. 本地浏览器刷新验证新效果。
+
+本地静态发布方式可以二选一：
+
+- 用一个轻量 Node static server，例如 `npx serve build/web`。
+- 在 local AI server 中增加一个简单静态文件路由，例如 `/preview` 指向 `flutter_vibe_app/build/web`。
+
+MVP 推荐先使用 local AI server 内置 `/preview`，原因是：
+
+- 少一个进程。
+- 变更单状态、CI 日志、部署结果都在同一个 server 中。
+- 验证链路清晰，后续替换成 GitHub Actions、Codemagic、Fastlane 或企业内部 CI 时成本低。
+
+本地 CI/CD 不需要立刻解决：
+
+- 正式签名。
+- 灰度发布。
+- 多环境发布。
+- 自动 PR 合并策略。
+- 完整权限系统。
+
+验证标准：
+
+- 一条 feedback ticket 可以触发 agent 修改。
+- CI 最少执行 analyze/test/build web。
+- 构建成功后 server 更新 ticket 状态为 `deployed`。
+- 用户打开或刷新本地 preview URL 能看到新效果。
+
 ## 重新校准后的 MVP 完成定义
 
 满足以下全部条件，MVP 才算完成：
@@ -420,6 +494,8 @@ MVP 只保留契约，不实现完整交互。
 - pub 依赖/完整重编译类变更进入 HITL。
 - Codex adapter 或 mock fallback 使用 selection context 修改正确文件。
 - Server 控制 App reload，并展示修改结果。
+- Profile/release 提单模式能创建变更单。
+- 本地最小 CI/CD 能完成 analyze/test/build web，并提供 preview URL。
 
 ## 下一步具体行动
 
@@ -432,3 +508,5 @@ MVP 只保留契约，不实现完整交互。
 - 复用 UME inspector 是选中组件上下文的最短路径。
 - 单会话历史是 hot restart 后体验连续性的前置条件。
 - Server 安全控制是允许 App 下发自然语言指令的前置条件。
+
+在 debug 闭环稳定后，下一步推进 Phase 14 和 Phase 15，用最小本地 CI/CD 验证非工程角色也能参与修改建议闭环。

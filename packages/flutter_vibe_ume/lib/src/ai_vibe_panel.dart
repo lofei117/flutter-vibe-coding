@@ -109,8 +109,7 @@ class _AiVibeFloatingPanelState extends State<AiVibeFloatingPanel> {
     } catch (error) {
       setState(() => _picking = false);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _panelKey.currentState
-            ?.reportPickFailure('Hit-test failed: $error');
+        _panelKey.currentState?.reportPickFailure('Hit-test failed: $error');
       });
     }
   }
@@ -242,9 +241,14 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
   String? _selectionError;
 
   String? _currentCommandId;
+  String? _activeInstruction;
+  DateTime? _commandStartedAt;
+  DateTime? _lastEventAt;
+  String? _lastStage;
   final List<CommandEvent> _events = [];
   CommandResponse? _lastResponse;
   StreamSubscription<CommandEvent>? _eventSub;
+  Timer? _progressTicker;
 
   ApprovalRequest? _pendingApproval;
   bool _submittingDecision = false;
@@ -276,6 +280,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
   @override
   void dispose() {
     _eventSub?.cancel();
+    _progressTicker?.cancel();
     _serverController.dispose();
     _instructionController.dispose();
     _reviseController.dispose();
@@ -392,11 +397,36 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
       source: source,
       resolveSourceAnchor: widget.resolveSourceAnchor,
     );
+    final needsRetry = !_hasResolvedSource(outcome.selection);
     setState(() {
       _selection = outcome.selection;
       _runtimeContext = outcome.runtimeContext;
       _selectionError = outcome.hasSelection ? null : outcome.reason;
     });
+    if (needsRetry) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final retried = SelectionCapture.captureCurrent(
+          source: source,
+          resolveSourceAnchor: widget.resolveSourceAnchor,
+        );
+        if (!_hasResolvedSource(retried.selection) &&
+            retried.selection == null) {
+          return;
+        }
+        if (!mounted) return;
+        setState(() {
+          _selection = retried.selection;
+          _runtimeContext = retried.runtimeContext;
+          _selectionError = retried.hasSelection ? null : retried.reason;
+        });
+      });
+    }
+  }
+
+  bool _hasResolvedSource(SelectedComponentContext? selection) {
+    if (selection == null) return false;
+    return selection.sourceLocation is SourceLocationAvailable;
   }
 
   /// Called by [_AiVibeFloatingPanelState] after the user taps a widget in
@@ -464,6 +494,14 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
       });
       return;
     }
+    if (_appSessionId == null) {
+      setState(() {
+        _status = 'error';
+        _statusDetail =
+            'This app was not launched by the local server. Start it via /app/start first so the server can control hot reload.';
+      });
+      return;
+    }
 
     setState(() {
       _status = 'sending';
@@ -471,9 +509,14 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
       _events.clear();
       _lastResponse = null;
       _currentCommandId = null;
+      _activeInstruction = instruction;
+      _commandStartedAt = DateTime.now();
+      _lastEventAt = DateTime.now();
+      _lastStage = 'queued';
       _pendingApproval = null;
       _groupExpanded.clear();
     });
+    _startProgressTicker();
     await _eventSub?.cancel();
     _eventSub = null;
 
@@ -506,6 +549,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
         _status = 'error';
         _statusDetail = 'Failed to enqueue: $error';
       });
+      _stopProgressTicker();
     }
   }
 
@@ -521,6 +565,8 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
         setState(() {
           _events.add(event);
           _statusDetail = '[${event.stage}] ${event.message}';
+          _lastEventAt = DateTime.now();
+          _lastStage = event.stage;
           if (event.stage == 'approval_required') {
             final req = _extractApprovalRequest(event.payload);
             if (req != null) {
@@ -547,6 +593,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
           _status = 'error';
           _statusDetail = 'Stream failed: $error';
         });
+        _stopProgressTicker();
       },
       onDone: () async {
         try {
@@ -561,16 +608,17 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
             if (fr?.requiresApproval == true && fr?.approvalRequest != null) {
               _pendingApproval = fr!.approvalRequest;
               _status = 'awaiting_approval';
-              _statusDetail =
-                  'Approval required: ${fr.approvalRequest!.title}';
+              _statusDetail = 'Approval required: ${fr.approvalRequest!.title}';
             } else {
               _pendingApproval = null;
-              _status = fr == null
-                  ? 'unknown'
-                  : (fr.success ? 'success' : 'error');
+              _status =
+                  fr == null ? 'unknown' : (fr.success ? 'success' : 'error');
               _statusDetail = fr?.message ?? 'No final response.';
             }
           });
+          if (_pendingApproval == null) {
+            _stopProgressTicker();
+          }
           await _refreshSessionFromServer();
           if (_pendingApproval == null) {
             _tabController.animateTo(2);
@@ -581,9 +629,29 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
             _status = 'error';
             _statusDetail = 'Failed to fetch final response: $error';
           });
+          _stopProgressTicker();
         }
       },
     );
+  }
+
+  void _startProgressTicker() {
+    _progressTicker?.cancel();
+    _progressTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_status != 'sending' &&
+          _status != 'running' &&
+          _status != 'awaiting_approval') {
+        _stopProgressTicker();
+        return;
+      }
+      setState(() {});
+    });
+  }
+
+  void _stopProgressTicker() {
+    _progressTicker?.cancel();
+    _progressTicker = null;
   }
 
   ApprovalRequest? _extractApprovalRequest(Map<String, dynamic>? payload) {
@@ -870,15 +938,18 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
           ),
           const SizedBox(height: 8),
           FilledButton(
-            onPressed: _status == 'sending' ||
+            onPressed: _appSessionId == null ||
+                    _status == 'sending' ||
                     _status == 'running' ||
                     _status == 'awaiting_approval'
                 ? null
                 : _sendInstruction,
             child: Text(
-              _status == 'awaiting_approval'
-                  ? 'Awaiting approval…'
-                  : (_status == 'running' ? 'Running…' : 'Send'),
+              _appSessionId == null
+                  ? 'Launch via Server First'
+                  : _status == 'awaiting_approval'
+                      ? 'Awaiting approval…'
+                      : (_status == 'running' ? 'Running…' : 'Send'),
             ),
           ),
           const SizedBox(height: 10),
@@ -976,6 +1047,151 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
         ],
       ),
     );
+  }
+
+  Widget _buildProgressBanner() {
+    final startedAt = _commandStartedAt;
+    final elapsed =
+        startedAt == null ? null : DateTime.now().difference(startedAt);
+    final lastUpdate =
+        _lastEventAt == null ? null : DateTime.now().difference(_lastEventAt!);
+    final step = _progressTitleForStage(_lastStage, _status);
+    final running = _status == 'sending' || _status == 'running';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEF6FF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF93C5FD)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (running)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Icon(
+                  _status == 'awaiting_approval'
+                      ? Icons.pause_circle
+                      : Icons.check_circle,
+                  size: 16,
+                  color: _status == 'awaiting_approval'
+                      ? const Color(0xFFD97706)
+                      : const Color(0xFF16A34A),
+                ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  step,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              if (elapsed != null)
+                Text(
+                  _formatElapsed(elapsed),
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (running)
+            const LinearProgressIndicator(minHeight: 3)
+          else
+            const SizedBox(height: 3),
+          const SizedBox(height: 10),
+          if ((_activeInstruction ?? '').isNotEmpty)
+            Text(
+              _activeInstruction!,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          if (_selection != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Target: ${_selection!.summarize()}',
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+          ],
+          const SizedBox(height: 4),
+          Text(
+            'Latest: $_statusDetail',
+            style: const TextStyle(fontSize: 12, color: Colors.black87),
+          ),
+          if (lastUpdate != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                'Last update ${_formatAgo(lastUpdate)}',
+                style: const TextStyle(fontSize: 11, color: Colors.black45),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _progressTitleForStage(String? stage, String status) {
+    switch (stage) {
+      case 'queued':
+        return 'Queued on local server';
+      case 'context_collected':
+        return 'Reading widget context and source files';
+      case 'agent_started':
+        return 'Agent is planning the change';
+      case 'patch_generated':
+      case 'patch_applied':
+        return 'Applying code changes';
+      case 'reload_started':
+        return 'Refreshing the running app';
+      case 'reload_completed':
+        return 'Finishing app refresh';
+      case 'approval_required':
+        return 'Waiting for your approval';
+      case 'completed':
+        return 'Command completed';
+      case 'failed':
+      case 'safety_blocked':
+        return 'Command failed';
+    }
+    switch (status) {
+      case 'sending':
+        return 'Sending instruction to server';
+      case 'running':
+        return 'Working on your change';
+      case 'awaiting_approval':
+        return 'Waiting for your approval';
+      case 'success':
+        return 'Command completed';
+      case 'error':
+        return 'Command failed';
+      default:
+        return 'Ready';
+    }
+  }
+
+  String _formatElapsed(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+    if (minutes > 0) {
+      return '${minutes}m ${seconds}s';
+    }
+    return '${duration.inSeconds}s';
+  }
+
+  String _formatAgo(Duration duration) {
+    if (duration.inSeconds <= 1) return 'just now';
+    if (duration.inSeconds < 60) return '${duration.inSeconds}s ago';
+    return '${duration.inMinutes}m ago';
   }
 
   Color _statusColor(String status) {
@@ -1134,8 +1350,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
               style: const TextStyle(fontSize: 12, color: Colors.black54)),
           if (candidates.isNotEmpty)
             Text('candidates: ${candidates.join(', ')}',
-                style:
-                    const TextStyle(fontSize: 12, color: Colors.black54)),
+                style: const TextStyle(fontSize: 12, color: Colors.black54)),
           Text('confidence: ${sel.confidence}  source: ${sel.source}',
               style: const TextStyle(fontSize: 12, color: Colors.black54)),
         ],
@@ -1164,6 +1379,13 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
           if (_currentCommandId != null)
             Text('commandId: $_currentCommandId',
                 style: const TextStyle(fontSize: 12, color: Colors.black54)),
+          if (_currentCommandId != null ||
+              _status == 'sending' ||
+              _status == 'running' ||
+              _status == 'awaiting_approval') ...[
+            const SizedBox(height: 8),
+            _buildProgressBanner(),
+          ],
           if (_pendingApproval != null) ...[
             const SizedBox(height: 8),
             _buildApprovalBanner(_pendingApproval!),
@@ -1200,8 +1422,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
     for (final event in events) {
       if (event.stage == 'agent_log' && groups.isNotEmpty) {
         final last = groups.last;
-        if (last.kind == _EventGroupKind.stream &&
-            last.stage == 'agent_log') {
+        if (last.kind == _EventGroupKind.stream && last.stage == 'agent_log') {
           last.events.add(event);
           continue;
         }
@@ -1230,22 +1451,24 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
   Widget _buildStreamGroupCard(_EventGroup group) {
     final color = _stageColor(group.stage);
     final entries = group.events
-        .map((e) => _LogEntry(event: e, payload: AgentLogPayload.maybe(e.payload)))
+        .map((e) =>
+            _LogEntry(event: e, payload: AgentLogPayload.maybe(e.payload)))
         .toList();
-    final highSignal = entries.where((e) => e.payload?.isHighSignal == true).toList();
-    final ordinary = entries.where((e) => e.payload?.isHighSignal != true).toList();
+    final highSignal =
+        entries.where((e) => e.payload?.isHighSignal == true).toList();
+    final ordinary =
+        entries.where((e) => e.payload?.isHighSignal != true).toList();
 
     final ordinaryBody = ordinary
         .map((e) => e.event.message)
         .where((m) => m.isNotEmpty)
         .join('\n');
-    final ordinaryLines = ordinaryBody.isEmpty
-        ? const <String>[]
-        : ordinaryBody.split('\n');
+    final ordinaryLines =
+        ordinaryBody.isEmpty ? const <String>[] : ordinaryBody.split('\n');
 
     const collapsedLineCount = 6;
-    final exceedsThreshold = ordinaryLines.length > collapsedLineCount ||
-        ordinaryBody.length > 480;
+    final exceedsThreshold =
+        ordinaryLines.length > collapsedLineCount || ordinaryBody.length > 480;
     final expanded = _groupExpanded[group.id] ?? false;
 
     final visibleBody = !exceedsThreshold || expanded
@@ -1306,9 +1529,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
                   size: 16,
                 ),
                 label: Text(
-                  expanded
-                      ? 'Collapse'
-                      : 'Show all ($hiddenLines more lines)',
+                  expanded ? 'Collapse' : 'Show all ($hiddenLines more lines)',
                   style: const TextStyle(fontSize: 12),
                 ),
               ),
@@ -1376,8 +1597,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
         Row(
           children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: color,
                 borderRadius: BorderRadius.circular(4),
@@ -1391,8 +1611,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
             Expanded(
               child: Text(
                 '#${first.sequence}–#${last.sequence} · ${group.events.length} entries',
-                style:
-                    const TextStyle(fontSize: 11, color: Colors.black54),
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -1435,9 +1654,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
   Widget _buildHighSignalLine(_LogEntry entry) {
     final payload = entry.payload!;
     final isError = payload.level == 'error';
-    final color = isError
-        ? const Color(0xFFDC2626)
-        : const Color(0xFFD97706);
+    final color = isError ? const Color(0xFFDC2626) : const Color(0xFFD97706);
     return Container(
       margin: const EdgeInsets.only(top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -1515,8 +1732,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
           Row(
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: color,
                   borderRadius: BorderRadius.circular(4),
@@ -1528,13 +1744,11 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
               ),
               const SizedBox(width: 6),
               Text('#${event.sequence}',
-                  style:
-                      const TextStyle(fontSize: 11, color: Colors.black45)),
+                  style: const TextStyle(fontSize: 11, color: Colors.black45)),
               const Spacer(),
               Text(
                 _shortTime(event.timestamp),
-                style:
-                    const TextStyle(fontSize: 11, color: Colors.black45),
+                style: const TextStyle(fontSize: 11, color: Colors.black45),
               ),
             ],
           ),
@@ -1561,9 +1775,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
                   size: 16,
                 ),
                 label: Text(
-                  expanded
-                      ? 'Collapse'
-                      : 'Show all ($hiddenLines more lines)',
+                  expanded ? 'Collapse' : 'Show all ($hiddenLines more lines)',
                   style: const TextStyle(fontSize: 12),
                 ),
               ),
@@ -1609,14 +1821,14 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFDE68A),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(req.reason,
-                    style: const TextStyle(fontSize: 11, color: Colors.black87)),
+                    style:
+                        const TextStyle(fontSize: 11, color: Colors.black87)),
               ),
             ],
           ),
@@ -1628,8 +1840,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
           if (req.changedFiles.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text('changedFiles: ${req.changedFiles.join(', ')}',
-                style:
-                    const TextStyle(fontSize: 12, color: Colors.black54)),
+                style: const TextStyle(fontSize: 12, color: Colors.black54)),
           ],
           if (req.risks.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -1691,7 +1902,8 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
   Widget _buildApprovalActionButton(String action) {
     final approved = const {'continue', 'rebuild', 'retry'}.contains(action);
     final rejected = const {'rollback', 'stop'}.contains(action);
-    final decision = approved ? 'approved' : (rejected ? 'rejected' : 'approved');
+    final decision =
+        approved ? 'approved' : (rejected ? 'rejected' : 'approved');
     final label = _approvalActionLabel(action);
     final icon = _approvalActionIcon(action);
     if (rejected) {
@@ -1794,9 +2006,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: resp.success
-            ? const Color(0xFFF0FDF4)
-            : const Color(0xFFFEF2F2),
+        color: resp.success ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2),
         border: Border.all(
           color: resp.success ? Colors.green.shade200 : Colors.red.shade200,
         ),
@@ -1812,21 +2022,17 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
               style: const TextStyle(fontSize: 12, color: Colors.black54)),
           if (resp.changedFiles.isNotEmpty)
             Text('changedFiles: ${resp.changedFiles.join(', ')}',
-                style:
-                    const TextStyle(fontSize: 12, color: Colors.black54)),
+                style: const TextStyle(fontSize: 12, color: Colors.black54)),
           if (resp.reloadMessage != null)
             Text('reload: ${resp.reloadMessage}',
-                style:
-                    const TextStyle(fontSize: 12, color: Colors.black54)),
+                style: const TextStyle(fontSize: 12, color: Colors.black54)),
           if (resp.safety != null && resp.safety!.reasons.isNotEmpty)
             Text('safety: ${resp.safety!.reasons.join('; ')}',
-                style:
-                    const TextStyle(fontSize: 12, color: Colors.black54)),
+                style: const TextStyle(fontSize: 12, color: Colors.black54)),
           if (resp.diagnostics.isNotEmpty)
             ...resp.diagnostics.map(
               (d) => Text('• [${d.level}] ${d.message}',
-                  style: const TextStyle(
-                      fontSize: 12, color: Colors.black54)),
+                  style: const TextStyle(fontSize: 12, color: Colors.black54)),
             ),
         ],
       ),
@@ -1874,8 +2080,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
                 child: Text(
                   'session: ${_session!.sessionId}'
                   '${_sessionFromCache ? '  (cache)' : ''}',
-                  style: const TextStyle(
-                      fontSize: 12, color: Colors.black54),
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
               ),
               IconButton(
@@ -1911,13 +2116,9 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: isFailed
-            ? const Color(0xFFFEF2F2)
-            : const Color(0xFFF9FAFB),
+        color: isFailed ? const Color(0xFFFEF2F2) : const Color(0xFFF9FAFB),
         border: Border.all(
-          color: isFailed
-              ? accentColor.withValues(alpha: 0.4)
-              : Colors.black12,
+          color: isFailed ? accentColor.withValues(alpha: 0.4) : Colors.black12,
         ),
         borderRadius: BorderRadius.circular(6),
       ),
@@ -1952,8 +2153,7 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Text('target: ${turn.selectionSummary}',
-                  style: const TextStyle(
-                      fontSize: 12, color: Colors.black54)),
+                  style: const TextStyle(fontSize: 12, color: Colors.black54)),
             ),
           const SizedBox(height: 4),
           Text(
@@ -1981,13 +2181,11 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
                   ),
-                  onPressed:
-                      _status == 'sending' || _status == 'running'
-                          ? null
-                          : () => _confirmRetryTurn(turn),
+                  onPressed: _status == 'sending' || _status == 'running'
+                      ? null
+                      : () => _confirmRetryTurn(turn),
                   icon: const Icon(Icons.replay, size: 16),
-                  label: const Text('Retry',
-                      style: TextStyle(fontSize: 12)),
+                  label: const Text('Retry', style: TextStyle(fontSize: 12)),
                 ),
               ),
             ),
@@ -2035,15 +2233,13 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(preview,
-                style: const TextStyle(
-                    fontSize: 12, fontFamily: 'monospace')),
+                style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
           ),
           const SizedBox(height: 10),
           if (turn.selectionSummary != null)
             Text(
               'Original target: ${turn.selectionSummary}',
-              style:
-                  const TextStyle(fontSize: 12, color: Colors.black54),
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
             ),
           const SizedBox(height: 4),
           Text(
@@ -2055,9 +2251,8 @@ class AiVibePanelPageState extends State<AiVibePanelPage>
                     '${_selection!.widget.text != null ? ' "${_selection!.widget.text}"' : ''}.',
             style: TextStyle(
               fontSize: 12,
-              color: _selection == null
-                  ? const Color(0xFFB45309)
-                  : Colors.black54,
+              color:
+                  _selection == null ? const Color(0xFFB45309) : Colors.black54,
             ),
           ),
         ],

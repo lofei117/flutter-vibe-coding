@@ -28,6 +28,12 @@ export class MockAgentAdapter implements AgentAdapter {
       logs.push(`Set homeTitle to "${title}".`);
     }
 
+    if (/翻译成中文|改成中文|中文/i.test(instruction)) {
+      next = replaceConstString(next, 'homeTitle', 'Flutter 氛围编程');
+      next = replaceConstString(next, 'homeDescription', '打开 UME，然后用 AI Vibe Panel 修改这个应用。');
+      logs.push('Translated homeTitle and homeDescription to Chinese.');
+    }
+
     if (target === 'home-button' || target === 'unknown') {
       if (/绿色|green/i.test(instruction)) {
         next = replaceConstColor(next, 'homeButtonColor', 'Colors.green');
@@ -94,25 +100,26 @@ function inferTarget(
   const widget = selection.widget;
   const key = widget.key ?? '';
   const text = widget.text ?? '';
-  if (
-    /home\.helloButton|home\.button/i.test(key) ||
-    widget.widgetType === 'FilledButton' ||
-    widget.widgetType === 'ElevatedButton' ||
-    widget.widgetType === 'TextButton' ||
-    /Hello Button|StartWQ|Start/i.test(text)
-  ) {
-    return 'home-button';
-  }
+    if (
+      /home\.helloButton|home\.button/i.test(key) ||
+      widget.widgetType === 'FilledButton' ||
+      widget.widgetType === 'ElevatedButton' ||
+      widget.widgetType === 'TextButton' ||
+      /Hello Button|StartWQ|Start/i.test(text)
+    ) {
+      return 'home-button';
+    }
   const ancestorIsAppBar = (widget.ancestorChain ?? []).some(
     (a) => a.widgetType === 'AppBar',
   );
   if (
-    /home\.title/i.test(key) ||
-    ancestorIsAppBar ||
-    widget.widgetType === 'AppBar'
-  ) {
-    return 'home-title';
-  }
+      /home\.title/i.test(key) ||
+      ancestorIsAppBar ||
+      widget.widgetType === 'AppBar' ||
+      /Flutter Vibe Coding|Flutter 氛围编程/i.test(text)
+    ) {
+      return 'home-title';
+    }
   return 'unknown';
 }
 

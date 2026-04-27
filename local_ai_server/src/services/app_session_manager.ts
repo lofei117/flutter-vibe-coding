@@ -14,7 +14,8 @@ const LAUNCH_URL_REGEX = /(https?:\/\/[\w.\-:/]+)/i;
 const RELOAD_TIMEOUT_MS = 8000;
 const RESTART_TIMEOUT_MS = 15000;
 
-const RELOAD_SUCCESS_REGEX = /Reloaded\s+\d+\s+(libraries?|of\s+\d+\s+libraries?)/i;
+const RELOAD_SUCCESS_REGEX =
+  /Reloaded\s+(?:application|(?:\d+\s+(?:libraries?|of\s+\d+\s+libraries?)))\s+in\s+\d+/i;
 const RESTART_SUCCESS_REGEX = /Restarted application in\s+\d+/i;
 const RELOAD_FAIL_REGEX =
   /(Hot reload (?:was |)rejected|Hot reload (?:was |)aborted|Hot reload failed|Try performing a hot restart|Hot restart failed|Unable to hot reload|Recompile complete\. \d+ errors)/i;

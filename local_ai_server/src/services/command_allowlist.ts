@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { SafetyError } from './safety_policy.ts';
 
 const ALLOWED_BINARIES = new Set([
@@ -20,7 +21,8 @@ const FORBIDDEN_SHELL_TOKENS = [
 ];
 
 export function ensureAllowedBinary(command: string): void {
-  if (!ALLOWED_BINARIES.has(command)) {
+  const binary = path.basename(command);
+  if (!ALLOWED_BINARIES.has(binary)) {
     throw new SafetyError({
       allowed: false,
       level: 'blocked',

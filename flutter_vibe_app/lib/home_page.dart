@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 
 // The mock agent edits only these values for the first runnable demo.
-const String homeTitle = 'Flutter Vibe Coding';
-const String homeButtonLabel = 'Start22';
+const String homeTitle = 'Home';
+const String homeButtonLabel = 'ToDo';
 const Color homeButtonColor = Colors.green;
-const String homeDescription =
-    'Open UME and use AI Vibe Panel to modify this app.';
+const String homeDescription = 'Open AI Vibe Panel to modify this app.';
 
 // Stable widget keys used as source-registry anchors. Do not rename without
 // updating `lib/source_registry.dart`.
@@ -142,7 +141,13 @@ class _TodoListPageState extends State<TodoListPage> {
                 final todo = _appTodos[index];
 
                 return ListTile(
-                  title: Text(todo.title),
+                  title: Text(
+                    todo.title,
+                    style: TextStyle(
+                      color: todo.done ? Colors.grey : null,
+                      decoration: todo.done ? TextDecoration.lineThrough : null,
+                    ),
+                  ),
                   leading: Checkbox(
                     value: todo.done,
                     onChanged: (value) {

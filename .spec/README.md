@@ -17,6 +17,8 @@
 - Reload/restart 出现编译错误时，server 必须尝试自检修复；修复失败后进入 HITL。
 - 涉及 pub 依赖或完整重编译 App 的变更必须进入简单 HITL，由用户确认。
 - Human in the loop 分层实现：MVP 做简单确认，完整 diff 审批放入远期规划。
+- 面向产品、QA 等非工程角色时，profile/release 包走提单模式，不强依赖 debug inspector 和 hot reload。
+- 本地最小 CI/CD 只验证链路：`flutter analyze`、`flutter test`、`flutter build web`、本地 preview 刷新。
 
 ## 规格文件
 
@@ -33,7 +35,7 @@
   "instruction": "把按钮改成绿色，并把文案改成 Start",
   "clientMeta": {
     "platform": "flutter",
-    "appName": "mobile_vibe_demo"
+    "appName": "flutter_vibe_app"
   }
 }
 ```
